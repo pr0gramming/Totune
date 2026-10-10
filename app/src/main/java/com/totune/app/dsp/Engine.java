@@ -63,6 +63,15 @@ public final class Engine {
         }
         progress(prog, 0.3f);
 
+        // vocoder: the tuned voice shapes a synth built from the key / melody
+        if (p.vocoderOn && p.vocoderMix > 0) {
+            final Analysis an = a;
+            float[] voc = Vocoder.process(lead, sr, out, tgt, s1 -> an.frameIndex(s1), p, mask);
+            float m = Effects.clamp01(p.vocoderMix);
+            for (int i = 0; i < lead.length; i++) lead[i] = lead[i] * (1 - m) + voc[i] * m;
+        }
+        progress(prog, 0.38f);
+
         int n = x.length;
         int tail = (p.reverbOn || p.delayOn) ? (int) (sr * 3.0) : (int) (sr * 0.1);
         int vLen = n + tail;
@@ -109,6 +118,8 @@ public final class Engine {
         // EQ + compressor on the vocal bus
         if (p.eqOn) { Effects.eq(busL, sr, p); Effects.eq(busR, sr, p); }
         if (p.compOn) Effects.compress(busL, busR, sr, p);
+        if (p.gritOn && p.grit > 0) Effects.grit(busL, busR, sr, p);
+        if (p.chorusOn && p.chorusMix > 0) Effects.chorus(busL, busR, sr, p);
         progress(prog, 0.65f);
 
         // sends (computed in place to keep memory low on phones)

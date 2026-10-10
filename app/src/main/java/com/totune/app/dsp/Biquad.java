@@ -35,6 +35,12 @@ public final class Biquad {
         return new Biquad((1 + c) / 2, -(1 + c), (1 + c) / 2, 1 + al, -2 * c, 1 - al);
     }
 
+    /** Band-pass with 0 dB peak gain. */
+    public static Biquad bandPass(double sr, double f, double q) {
+        double w = w(sr, f), c = Math.cos(w), al = Math.sin(w) / (2 * q);
+        return new Biquad(al, 0, -al, 1 + al, -2 * c, 1 - al);
+    }
+
     public static Biquad peak(double sr, double f, double q, double gainDb) {
         double A = Math.pow(10, gainDb / 40), w = w(sr, f), c = Math.cos(w), al = Math.sin(w) / (2 * q);
         return new Biquad(1 + al * A, -2 * c, 1 - al * A, 1 + al / A, -2 * c, 1 - al / A);

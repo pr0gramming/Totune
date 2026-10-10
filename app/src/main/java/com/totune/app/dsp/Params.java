@@ -19,6 +19,20 @@ public final class Params implements Cloneable {
     public float doublerDetune = 10f; // cents
     public float doublerWidth = 1f;   // 0..1 stereo spread
 
+    // Vocoder
+    public boolean vocoderOn = false;
+    public int vocoderMode = 0;       // index into VOCODER_MODES
+    public float vocoderMix = 0.8f;   // 0 = dry voice, 1 = full robot
+
+    // Grit (saturation)
+    public boolean gritOn = false;
+    public float grit = 0.3f;
+
+    // Chorus
+    public boolean chorusOn = false;
+    public float chorusMix = 0.35f;
+    public float chorusDepth = 0.5f;
+
     // EQ
     public boolean eqOn = true;
     public boolean hpOn = true;
@@ -60,6 +74,8 @@ public final class Params implements Cloneable {
 
     public static final String[] HARMONY_NAMES = {
             "Off", "3rd up", "5th up", "3rd + 5th up", "3rd down", "Octave down", "Octave up"};
+
+    public static final String[] VOCODER_MODES = {"Chords", "Melody robot", "Monotone", "Deep robot"};
 
     public static final String[] DELAY_DIVS = {
             "1/2", "1/4", "1/4 dotted", "1/8", "1/8 dotted", "1/8 triplet", "1/16"};

@@ -49,6 +49,56 @@ public final class Effects {
         }
     }
 
+    // ------------------------------------------------------------------ grit (saturation)
+
+    static void grit(float[] l, float[] r, int sr, Params p) {
+        float d = clamp01(p.grit);
+        float g = 1 + d * 14;
+        float norm = (float) (1.0 / Math.tanh(g * 0.5)) * 0.5f; // keeps level roughly constant
+        Biquad toneL = Biquad.lowPass(sr, 9000 - 4000 * d, 0.7071), toneR = Biquad.lowPass(sr, 9000 - 4000 * d, 0.7071);
+        for (int i = 0; i < l.length; i++) {
+            float wl = (float) Math.tanh(l[i] * g) * norm, wr = (float) Math.tanh(r[i] * g) * norm;
+            l[i] = l[i] * (1 - d) + toneL.process(wl) * d;
+            r[i] = r[i] * (1 - d) + toneR.process(wr) * d;
+        }
+    }
+
+    // ------------------------------------------------------------------ chorus
+
+    /** Two modulated delay lines per side, mixed in place. */
+    static void chorus(float[] l, float[] r, int sr, Params p) {
+        float mix = clamp01(p.chorusMix), depth = clamp01(p.chorusDepth);
+        int size = (int) (sr * 0.05);
+        float[] bl = new float[size], br = new float[size];
+        double base = sr * 0.014, dep = sr * (0.0015 + 0.004 * depth);
+        double[] rates = {0.43, 0.71};
+        int w = 0;
+        for (int i = 0; i < l.length; i++) {
+            bl[w] = l[i];
+            br[w] = r[i];
+            double t = i / (double) sr;
+            float wl = 0, wr = 0;
+            for (int v = 0; v < 2; v++) {
+                double dl = base + dep * (1 + Math.sin(2 * Math.PI * rates[v] * t + v * 2.1)) * 0.5;
+                double dr = base + dep * (1 + Math.sin(2 * Math.PI * rates[v] * t + v * 2.1 + Math.PI / 2)) * 0.5;
+                wl += tap(bl, w, dl, size);
+                wr += tap(br, w, dr, size);
+            }
+            l[i] = l[i] * (1 - mix * 0.5f) + wl * 0.5f * mix;
+            r[i] = r[i] * (1 - mix * 0.5f) + wr * 0.5f * mix;
+            if (++w == size) w = 0;
+        }
+    }
+
+    private static float tap(float[] buf, int w, double delay, int size) {
+        double pos = w - delay;
+        while (pos < 0) pos += size;
+        int i0 = (int) pos;
+        double f = pos - i0;
+        int i1 = (i0 + 1) % size;
+        return (float) (buf[i0] * (1 - f) + buf[i1] * f);
+    }
+
     // ------------------------------------------------------------------ delay
 
     /** Adds the delay's wet signal (times mix) into l/r in place. Input is read before it is overwritten. */

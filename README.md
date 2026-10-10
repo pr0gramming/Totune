@@ -3,6 +3,10 @@
 Record your voice, then tune it and mix it on your Android phone (Android 10+).
 
 ## Features
+- **One tile per effect**: tap a tile's name to switch it on/off, turn its single knob, tap ⋯ for every detail
+- **Vocoder**: your voice drives a synth — chords from your key, melody robot, monotone or deep robot
+- **Grit** (saturation) and **Chorus**
+- **Style presets**: Hip-hop/Trap (Black & Yellow, Astro Rage, Mask Off…), Pop, Overuse Autotune, Robot/Vocoder
 - **Record** vocals alone or over an imported beat (use headphones), or import an existing audio file
 - **TUNE**: pitch correction with key (12 keys), scale (major, minor, chromatic, harmonic minor, pentatonics, blues, modes), retune speed (0 ms robotic → 400 ms natural), amount, A4 reference (415–466 Hz, default 440), transpose, and "Detect key from my voice"
 - **Pitch graph**: sung pitch vs tuned pitch over the scale's notes; tap to seek

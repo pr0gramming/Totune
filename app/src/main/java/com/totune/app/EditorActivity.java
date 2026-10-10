@@ -36,7 +36,6 @@ import java.util.concurrent.Executors;
 public class EditorActivity extends Activity {
     private static final int SR = AudioCodec.SR;
     private static final int REQ_BEAT = 20;
-    private static final String[] TABS = {"TUNE", "EQ", "COMP", "FX", "VOICES", "MIX"};
 
     private TakeStore.Take take;
     private Params p;
@@ -54,10 +53,12 @@ public class EditorActivity extends Activity {
     private PitchGraphView graph;
     private TextView playBtn, timeText, statusText, titleText;
     private ProgressBar progress;
-    private LinearLayout tabContent;
-    private ScrollView tabScroll;
-    private final List<TextView> tabViews = new ArrayList<>();
-    private int currentTab = 0;
+    private LinearLayout tileGrid;
+    private LinearLayout target;           // where the control builders add views
+    private android.app.AlertDialog detailDialog;
+    private String detailTitle;
+    private Runnable detailBuilder;
+    private int lastHarmony = 3;
     private EqCurveView eqCurve;
     private final List<Long> taps = new ArrayList<>();
 
@@ -140,30 +141,12 @@ public class EditorActivity extends Activity {
         progress.setProgressTintList(android.content.res.ColorStateList.valueOf(Ui.ACCENT));
         root.addView(progress, Ui.lp(ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 4)));
 
-        // tabs
-        android.widget.HorizontalScrollView hs = new android.widget.HorizontalScrollView(this);
-        hs.setHorizontalScrollBarEnabled(false);
-        LinearLayout tabs = Ui.row(this);
-        tabs.setPadding(0, Ui.dp(this, 8), 0, Ui.dp(this, 2));
-        for (int i = 0; i < TABS.length; i++) {
-            TextView t = Ui.text(this, TABS[i], 13, Ui.DIM, true);
-            t.setLetterSpacing(0.1f);
-            t.setGravity(Gravity.CENTER);
-            t.setPadding(Ui.dp(this, 14), Ui.dp(this, 9), Ui.dp(this, 14), Ui.dp(this, 9));
-            final int idx = i;
-            t.setOnClickListener(v -> showTab(idx));
-            tabViews.add(t);
-            tabs.addView(t, Ui.margins(Ui.lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT),
-                    0, 0, Ui.dp(this, 6), 0));
-        }
-        hs.addView(tabs);
-        root.addView(hs);
-
-        tabScroll = new ScrollView(this);
-        tabContent = Ui.column(this);
-        tabContent.setPadding(0, Ui.dp(this, 4), 0, Ui.dp(this, 12));
-        tabScroll.addView(tabContent);
-        root.addView(tabScroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
+        // effect tiles
+        ScrollView tilesScroll = new ScrollView(this);
+        tileGrid = Ui.column(this);
+        tileGrid.setPadding(0, Ui.dp(this, 10), 0, Ui.dp(this, 8));
+        tilesScroll.addView(tileGrid);
+        root.addView(tilesScroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
 
         TextView export = Ui.button(this, "Export / Share", true);
         export.setOnClickListener(v -> exportDialog());
@@ -171,34 +154,176 @@ public class EditorActivity extends Activity {
                 0, Ui.dp(this, 6), 0, 0));
 
         setContentView(root);
-        showTab(0);
+        renderTiles();
     }
 
-    private void showTab(int i) {
-        currentTab = i;
-        for (int k = 0; k < tabViews.size(); k++) {
-            TextView t = tabViews.get(k);
-            boolean on = k == i;
-            t.setTextColor(on ? Ui.TEXT : Ui.DIM);
-            t.setBackground(on ? Ui.round(Ui.PANEL2, Ui.dp(this, 12), Ui.LINE, Ui.dp(this, 1)) : null);
+    /** Rebuilds tiles and, if a details sheet is open, reopens it with fresh values. */
+    private void refreshUi() {
+        renderTiles();
+        if (detailDialog != null && detailDialog.isShowing()) {
+            detailDialog.setOnDismissListener(null);
+            detailDialog.dismiss();
+            openDetails(detailTitle, detailBuilder);
         }
-        tabContent.removeAllViews();
+    }
+
+    private void openDetails(String title, Runnable builder) {
+        detailTitle = title;
+        detailBuilder = builder;
+        LinearLayout col = Ui.column(this);
+        int pd = Ui.dp(this, 18);
+        col.setPadding(pd, Ui.dp(this, 4), pd, pd);
+        target = col;
         eqCurve = null;
-        switch (i) {
-            case 0: buildTune(); break;
-            case 1: buildEq(); break;
-            case 2: buildComp(); break;
-            case 3: buildFx(); break;
-            case 4: buildVoices(); break;
-            default: buildMix(); break;
-        }
-        tabScroll.scrollTo(0, 0);
+        builder.run();
+        target = null;
+        ScrollView sv = new ScrollView(this);
+        sv.addView(col);
+        detailDialog = Ui.dialog(this).setTitle(title).setView(sv).setPositiveButton("Done", null).create();
+        detailDialog.setOnDismissListener(d -> { eqCurve = null; renderTiles(); });
+        detailDialog.show();
     }
 
-    private void rebuildTab() {
-        int y = tabScroll.getScrollY();
-        showTab(currentTab);
-        tabScroll.post(() -> tabScroll.scrollTo(0, y));
+    // ------------------------------------------------------------------ tiles
+
+    private interface FloatGet { float get(); }
+    private interface FloatSet { void set(float v); }
+    private interface BoolGet { boolean get(); }
+    private interface BoolSet { void set(boolean v); }
+    private interface Text { String get(); }
+
+    private static final class Tile {
+        String name; BoolGet on; BoolSet setOn;
+        String knobLabel; float min, max, def; boolean log; FloatGet get; FloatSet set; Knob.Format fmt;
+        Text sub; String detailTitle; Runnable details;
+    }
+
+    private Tile tile(String name, BoolGet on, BoolSet setOn, String knobLabel, float min, float max, float def,
+                      FloatGet get, FloatSet set, Knob.Format fmt, Text sub, String detailTitle, Runnable details) {
+        Tile t = new Tile();
+        t.name = name; t.on = on; t.setOn = setOn; t.knobLabel = knobLabel; t.min = min; t.max = max; t.def = def;
+        t.get = get; t.set = set; t.fmt = fmt; t.sub = sub; t.detailTitle = detailTitle; t.details = details;
+        return t;
+    }
+
+    private List<Tile> tiles() {
+        List<Tile> l = new ArrayList<>();
+        l.add(tile("TUNE", () -> p.tuneOn, v -> p.tuneOn = v, "Strength", 0, 100, 90,
+                () -> (float) (100 * (1 - Math.sqrt(p.retuneMs / 400.0))),
+                v -> p.retuneMs = (float) (400 * Math.pow(1 - v / 100.0, 2)), pct(),
+                () -> Scales.NOTE_NAMES[p.key] + " " + Scales.NAMES[p.scale] + " · " + tuneWord(),
+                "Pitch correction", this::buildTune));
+        l.add(tile("HARMONY", () -> p.harmony > 0, v -> { if (v) p.harmony = lastHarmony; else { lastHarmony = Math.max(1, p.harmony); p.harmony = 0; } },
+                "Level", 0, 100, 50, () -> p.harmonyLevel * 100, v -> p.harmonyLevel = v / 100f, pct(),
+                () -> p.harmony > 0 ? Params.HARMONY_NAMES[p.harmony] : Params.HARMONY_NAMES[lastHarmony],
+                "Harmony", this::buildHarmony));
+        l.add(tile("VOCODER", () -> p.vocoderOn, v -> p.vocoderOn = v, "Robot mix", 0, 100, 80,
+                () -> p.vocoderMix * 100, v -> p.vocoderMix = v / 100f, pct(),
+                () -> Params.VOCODER_MODES[p.vocoderMode], "Vocoder", this::buildVocoder));
+        l.add(tile("DOUBLE", () -> p.doublerOn, v -> p.doublerOn = v, "Level", 0, 100, 50,
+                () -> p.doublerLevel * 100, v -> p.doublerLevel = v / 100f, pct(),
+                () -> Math.round(p.doublerDetune) + " ct · width " + Math.round(p.doublerWidth * 100) + "%",
+                "Doubler", this::buildDoubler));
+        l.add(tile("EQ", () -> p.eqOn, v -> p.eqOn = v, "Air", -12, 12, 0,
+                () -> p.highGain, v -> p.highGain = v, db(),
+                () -> (p.hpOn ? "Low cut " + Math.round(p.hpFreq) + " Hz" : "No low cut") + (p.lpOn ? " · high cut" : ""),
+                "EQ", this::buildEq));
+        l.add(tile("COMP", () -> p.compOn, v -> p.compOn = v, "Squash", 0, 100, 40,
+                () -> Math.max(0, Math.min(100, (-6 - p.compThresh) / 30f * 100)),
+                v -> { float k = v / 100f; p.compThresh = -6 - 30 * k; p.compRatio = 2 + 6 * k; p.compMakeup = 1 + 7 * k; },
+                pct(), () -> Math.round(p.compThresh) + " dB · " + String.format(Locale.US, "%.1f:1", p.compRatio),
+                "Compressor", this::buildComp));
+        l.add(tile("GRIT", () -> p.gritOn, v -> p.gritOn = v, "Drive", 0, 100, 30,
+                () -> p.grit * 100, v -> p.grit = v / 100f, pct(), () -> "Warm saturation", "Grit", this::buildGrit));
+        l.add(tile("CHORUS", () -> p.chorusOn, v -> p.chorusOn = v, "Mix", 0, 100, 35,
+                () -> p.chorusMix * 100, v -> p.chorusMix = v / 100f, pct(),
+                () -> "Depth " + Math.round(p.chorusDepth * 100) + "%", "Chorus", this::buildChorus));
+        l.add(tile("DELAY", () -> p.delayOn, v -> p.delayOn = v, "Mix", 0, 100, 20,
+                () -> p.delayMix * 100, v -> p.delayMix = v / 100f, pct(),
+                () -> Params.DELAY_DIVS[p.delayDiv] + " · " + Math.round(p.bpm) + " BPM", "Delay", this::buildDelay));
+        l.add(tile("REVERB", () -> p.reverbOn, v -> p.reverbOn = v, "Mix", 0, 100, 18,
+                () -> p.revMix * 100, v -> p.revMix = v / 100f, pct(),
+                () -> "Size " + Math.round(p.revSize * 100) + "%", "Reverb", this::buildReverb));
+        l.add(tile("BEAT", null, null, "Beat vol", 0, 150, 80,
+                () -> p.beatVol * 100, v -> p.beatVol = v / 100f, pct(),
+                () -> beat != null ? "Sync " + Math.round(p.latencyMs) + " ms" : "No beat · tap ⋯ to add",
+                "Beat & mix", this::buildMix));
+        return l;
+    }
+
+    private String tuneWord() {
+        if (!p.tuneOn) return "off";
+        if (p.retuneMs < 1) return "robot";
+        if (p.retuneMs < 40) return "hard";
+        if (p.retuneMs < 130) return "tight";
+        return "natural";
+    }
+
+    private void renderTiles() {
+        if (tileGrid == null) return;
+        tileGrid.removeAllViews();
+        List<Tile> list = tiles();
+        int gap = Ui.dp(this, 5);
+        for (int i = 0; i < list.size(); i += 2) {
+            LinearLayout row = Ui.row(this);
+            row.addView(tileView(list.get(i)), Ui.margins(Ui.weight(1), 0, 0, gap, 0));
+            if (i + 1 < list.size()) row.addView(tileView(list.get(i + 1)), Ui.margins(Ui.weight(1), gap, 0, 0, 0));
+            else row.addView(new View(this), Ui.margins(Ui.weight(1), gap, 0, 0, 0));
+            tileGrid.addView(row, Ui.margins(Ui.lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT),
+                    0, 0, 0, gap * 2));
+        }
+    }
+
+    private View tileView(Tile t) {
+        boolean on = t.on == null || t.on.get();
+        LinearLayout card = Ui.column(this);
+        int pd = Ui.dp(this, 12);
+        card.setPadding(pd, Ui.dp(this, 10), Ui.dp(this, 6), Ui.dp(this, 2));
+        card.setBackground(Ui.round(Ui.PANEL, Ui.dp(this, 16), on && t.on != null ? 0xFF3A3F4B : Ui.LINE, Ui.dp(this, 1)));
+
+        LinearLayout head = Ui.row(this);
+        TextView dot = Ui.text(this, t.on == null ? "◆" : (on ? "●" : "○"), 12, on ? Ui.TEAL : Ui.DIM, true);
+        dot.setPadding(0, 0, Ui.dp(this, 6), 0);
+        head.addView(dot);
+        TextView name = Ui.text(this, t.name, 13.5f, on ? Ui.TEXT : Ui.DIM, true);
+        name.setLetterSpacing(0.1f);
+        head.addView(name, Ui.weight(1));
+        TextView more = Ui.text(this, "⋯", 20, Ui.DIM, true);
+        more.setPadding(Ui.dp(this, 10), 0, Ui.dp(this, 6), 0);
+        more.setOnClickListener(v -> openDetails(t.detailTitle, t.details));
+        head.addView(more);
+        head.setOnClickListener(v -> {
+            if (t.setOn == null) { openDetails(t.detailTitle, t.details); return; }
+            t.setOn.set(!t.on.get());
+            renderTiles();
+            changed();
+        });
+        card.addView(head);
+
+        TextView sub = Ui.text(this, t.sub.get(), 11.5f, Ui.DIM, false);
+        sub.setSingleLine(true);
+        sub.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        card.addView(sub);
+
+        Knob k = new Knob(this, t.knobLabel, t.min, t.max, t.def, t.get.get(), t.log, 1).format(t.fmt);
+        final Knob[] knobRef = {k};
+        k.listener(v -> {
+            t.set.set(v);
+            if (t.setOn != null && !t.on.get()) {
+                // turning a knob on a bypassed effect switches it on (updated in place so the drag continues)
+                t.setOn.set(true);
+                dot.setText("●"); dot.setTextColor(Ui.TEAL);
+                name.setTextColor(Ui.TEXT);
+                knobRef[0].setAlpha(1f);
+                card.setBackground(Ui.round(Ui.PANEL, Ui.dp(this, 16), 0xFF3A3F4B, Ui.dp(this, 1)));
+            }
+            sub.setText(t.sub.get());
+            changed();
+        });
+        k.setAlpha(on ? 1f : 0.45f);
+        card.addView(k, Ui.lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        card.setOnLongClickListener(v -> { openDetails(t.detailTitle, t.details); return true; });
+        return card;
     }
 
     // ------------------------------------------------------------------ helpers for controls
@@ -218,7 +343,7 @@ public class EditorActivity extends Activity {
     }
 
     private void add(View v) {
-        tabContent.addView(v, Ui.lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        target.addView(v, Ui.lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
     }
 
     private LinearLayout toggleRow(View... toggles) {
@@ -266,10 +391,10 @@ public class EditorActivity extends Activity {
             p.scale = k[1];
             Toast.makeText(this, "Detected: " + Scales.NOTE_NAMES[k[0]] + " " + Scales.NAMES[k[1]], Toast.LENGTH_LONG).show();
             graphKey();
-            rebuildTab();
+            refreshUi();
             changed();
         });
-        tabContent.addView(detect, Ui.margins(Ui.lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT),
+        target.addView(detect, Ui.margins(Ui.lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT),
                 0, Ui.dp(this, 12), 0, 0));
 
         add(Ui.label(this, "Correction"));
@@ -289,7 +414,7 @@ public class EditorActivity extends Activity {
         eqCurve.setParams(p);
         eqCurve.setBackground(Ui.round(Ui.PANEL, Ui.dp(this, 14), 0, 0));
         eqCurve.setClipToOutline(true);
-        tabContent.addView(eqCurve, Ui.margins(Ui.lp(ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 130)),
+        target.addView(eqCurve, Ui.margins(Ui.lp(ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 130)),
                 0, Ui.dp(this, 6), 0, 0));
         add(toggleRow(Ui.toggle(this, "EQ", p.eqOn, v -> { p.eqOn = v; changed(); })));
 
@@ -328,8 +453,7 @@ public class EditorActivity extends Activity {
         add(Ui.hint(this, "Evens out loud and quiet words. Start around −18 dB, 3:1, then raise Makeup to taste."));
     }
 
-    private void buildFx() {
-        add(Ui.label(this, "Delay"));
+    private void buildDelay() {
         add(toggleRow(
                 Ui.toggle(this, "Delay", p.delayOn, v -> { p.delayOn = v; changed(); }),
                 Ui.toggle(this, "Ping-pong", p.pingPong, v -> { p.pingPong = v; changed(); })));
@@ -362,7 +486,10 @@ public class EditorActivity extends Activity {
                 knob("Feedback", 0, 90, 30, p.delayFeedback * 100, false, 1, pct(), v -> p.delayFeedback = v / 100f),
                 knob("Mix", 0, 100, 20, p.delayMix * 100, false, 1, pct(), v -> p.delayMix = v / 100f)));
 
-        add(Ui.label(this, "Reverb"));
+        add(Ui.hint(this, "Set the tempo to your beat's BPM so delay repeats land on the groove."));
+    }
+
+    private void buildReverb() {
         add(toggleRow(Ui.toggle(this, "Reverb", p.reverbOn, v -> { p.reverbOn = v; changed(); })));
         add(knobRow(
                 knob("Size", 0, 100, 60, p.revSize * 100, false, 1, pct(), v -> p.revSize = v / 100f),
@@ -371,23 +498,48 @@ public class EditorActivity extends Activity {
                 knob("Mix", 0, 100, 18, p.revMix * 100, false, 1, pct(), v -> p.revMix = v / 100f)));
         add(knobRow(
                 knob("Width", 0, 100, 100, p.revWidth * 100, false, 1, pct(), v -> p.revWidth = v / 100f)));
-        add(Ui.hint(this, "Set the tempo to your beat's BPM so delay repeats land on the groove."));
     }
 
-    private void buildVoices() {
-        add(Ui.label(this, "Harmony"));
-        add(Ui.chips(this, Params.HARMONY_NAMES, p.harmony, 0, i -> { p.harmony = i; changed(); }));
+    private void buildHarmony() {
+        add(Ui.label(this, "Voices"));
+        add(Ui.chips(this, Params.HARMONY_NAMES, p.harmony, 0, i -> { p.harmony = i; if (i > 0) lastHarmony = i; changed(); }));
         add(knobRow(knob("Harmony level", 0, 100, 50, p.harmonyLevel * 100, false, 1, pct(),
                 v -> p.harmonyLevel = v / 100f)));
         add(Ui.hint(this, "Harmonies are generated from your voice and follow the key & scale on the TUNE tab."));
 
-        add(Ui.label(this, "Doubler"));
+    }
+
+    private void buildDoubler() {
         add(toggleRow(Ui.toggle(this, "Doubler", p.doublerOn, v -> { p.doublerOn = v; changed(); })));
         add(knobRow(
                 knob("Level", 0, 100, 50, p.doublerLevel * 100, false, 1, pct(), v -> p.doublerLevel = v / 100f),
                 knob("Detune", 0, 30, 10, p.doublerDetune, false, 1, fmt("%.0f ct"), v -> p.doublerDetune = v),
                 knob("Width", 0, 100, 100, p.doublerWidth * 100, false, 1, pct(), v -> p.doublerWidth = v / 100f)));
         add(Ui.hint(this, "The doubler adds two slightly detuned, slightly late copies left and right for a thick, wide vocal."));
+    }
+
+    private void buildVocoder() {
+        add(toggleRow(Ui.toggle(this, "Vocoder", p.vocoderOn, v -> { p.vocoderOn = v; changed(); })));
+        add(Ui.label(this, "Robot voice"));
+        add(Ui.chips(this, Params.VOCODER_MODES, p.vocoderMode, 0, i -> { p.vocoderMode = i; changed(); }));
+        add(knobRow(knob("Robot mix", 0, 100, 80, p.vocoderMix * 100, false, 1, pct(), v -> p.vocoderMix = v / 100f)));
+        add(Ui.hint(this, "Chords: your voice plays a synth chord built from your key (choir / Daft-style pad). "
+                + "Melody robot: a synth that follows your tuned melody. Monotone: one fixed robot note on the key's root. "
+                + "Deep robot: the melody an octave down. Lower the mix to blend robot and real voice."));
+    }
+
+    private void buildGrit() {
+        add(toggleRow(Ui.toggle(this, "Grit", p.gritOn, v -> { p.gritOn = v; changed(); })));
+        add(knobRow(knob("Drive", 0, 100, 30, p.grit * 100, false, 1, pct(), v -> p.grit = v / 100f)));
+        add(Ui.hint(this, "Tape-style saturation. A little adds energy and presence; a lot gives a dirty, distorted rap vocal."));
+    }
+
+    private void buildChorus() {
+        add(toggleRow(Ui.toggle(this, "Chorus", p.chorusOn, v -> { p.chorusOn = v; changed(); })));
+        add(knobRow(
+                knob("Mix", 0, 100, 35, p.chorusMix * 100, false, 1, pct(), v -> p.chorusMix = v / 100f),
+                knob("Depth", 0, 100, 50, p.chorusDepth * 100, false, 1, pct(), v -> p.chorusDepth = v / 100f)));
+        add(Ui.hint(this, "Wobbly, wide shimmer — a staple of spacey melodic-trap vocals."));
     }
 
     private void buildMix() {
@@ -417,7 +569,7 @@ public class EditorActivity extends Activity {
             rm.setOnClickListener(v -> {
                 take.beat().delete();
                 beat = null;
-                rebuildTab();
+                refreshUi();
                 changed();
             });
             r.addView(rm, Ui.weight(1));
@@ -447,7 +599,7 @@ public class EditorActivity extends Activity {
                     vocal = fx;
                     beat = fb;
                     analysis = an;
-                    if (currentTab == 5) rebuildTab();
+                    renderTiles();
                     render();
                 });
             } catch (Exception e) {
@@ -588,25 +740,62 @@ public class EditorActivity extends Activity {
     }
 
     private void presetsDialog() {
-        Map<String, Params> builtIns = Presets.builtIns();
+        LinearLayout col = Ui.column(this);
+        int pd = Ui.dp(this, 18);
+        col.setPadding(pd, Ui.dp(this, 4), pd, pd);
+        final android.app.AlertDialog[] dlg = new android.app.AlertDialog[1];
+
+        TextView save = Ui.button(this, "＋  Save current settings as preset", false);
+        save.setOnClickListener(v -> { dlg[0].dismiss(); savePresetDialog(); });
+        col.addView(save);
+
+        for (Map.Entry<String, List<Presets.Preset>> cat : Presets.categories().entrySet()) {
+            col.addView(Ui.label(this, cat.getKey()));
+            for (Presets.Preset pr : cat.getValue()) {
+                col.addView(presetRow(pr.name, pr.desc, () -> { dlg[0].dismiss(); applyPreset(pr.name, pr.params); }, null));
+            }
+        }
         Map<String, Params> user = Presets.user(this);
-        List<String> items = new ArrayList<>();
-        List<Params> values = new ArrayList<>();
-        items.add("＋  Save current settings as preset…");
-        values.add(null);
-        for (Map.Entry<String, Params> e : builtIns.entrySet()) { items.add(e.getKey()); values.add(e.getValue()); }
-        for (Map.Entry<String, Params> e : user.entrySet()) { items.add("★ " + e.getKey()); values.add(e.getValue()); }
-        if (!user.isEmpty()) { items.add("Delete one of my presets…"); values.add(null); }
-        Ui.dialog(this).setTitle("Presets")
-                .setItems(items.toArray(new String[0]), (d, which) -> {
-                    if (which == 0) { savePresetDialog(); return; }
-                    Params v = values.get(which);
-                    if (v == null) { deletePresetDialog(new ArrayList<>(user.keySet())); return; }
-                    Presets.apply(v, p);
-                    rebuildTab();
-                    changed();
-                    Toast.makeText(this, "Preset: " + items.get(which).replace("★ ", ""), Toast.LENGTH_SHORT).show();
-                }).show();
+        if (!user.isEmpty()) {
+            col.addView(Ui.label(this, "My presets"));
+            for (Map.Entry<String, Params> e : user.entrySet()) {
+                col.addView(presetRow("★ " + e.getKey(), "Long-press to delete",
+                        () -> { dlg[0].dismiss(); applyPreset(e.getKey(), e.getValue()); },
+                        () -> {
+                            dlg[0].dismiss();
+                            Ui.dialog(this).setTitle("Delete “" + e.getKey() + "”?")
+                                    .setPositiveButton("Delete", (d, w) -> Presets.deleteUser(this, e.getKey()))
+                                    .setNegativeButton("Cancel", null).show();
+                        }));
+            }
+        }
+        ScrollView sv = new ScrollView(this);
+        sv.addView(col);
+        dlg[0] = Ui.dialog(this).setTitle("Presets").setView(sv).setNegativeButton("Close", null).create();
+        dlg[0].show();
+    }
+
+    private View presetRow(String name, String desc, Runnable onTap, Runnable onLong) {
+        LinearLayout r = Ui.column(this);
+        int ph = Ui.dp(this, 14), pv = Ui.dp(this, 10);
+        r.setPadding(ph, pv, ph, pv);
+        r.setBackground(Ui.ripple(Ui.round(Ui.PANEL2, Ui.dp(this, 12), Ui.LINE, Ui.dp(this, 1))));
+        r.addView(Ui.text(this, name, 15, Ui.TEXT, true));
+        r.addView(Ui.text(this, desc, 12, Ui.DIM, false));
+        r.setOnClickListener(v -> onTap.run());
+        if (onLong != null) r.setOnLongClickListener(v -> { onLong.run(); return true; });
+        LinearLayout.LayoutParams lp = Ui.lp(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.setMargins(0, 0, 0, Ui.dp(this, 6));
+        r.setLayoutParams(lp);
+        return r;
+    }
+
+    private void applyPreset(String name, Params preset) {
+        Presets.apply(preset, p);
+        if (p.harmony > 0) lastHarmony = p.harmony;
+        refreshUi();
+        changed();
+        Toast.makeText(this, "Preset: " + name, Toast.LENGTH_SHORT).show();
     }
 
     private void savePresetDialog() {
@@ -625,14 +814,6 @@ public class EditorActivity extends Activity {
                     Toast.makeText(this, "Saved “" + n + "”", Toast.LENGTH_SHORT).show();
                 })
                 .setNegativeButton("Cancel", null).show();
-    }
-
-    private void deletePresetDialog(List<String> names) {
-        Ui.dialog(this).setTitle("Delete preset")
-                .setItems(names.toArray(new String[0]), (d, which) -> {
-                    Presets.deleteUser(this, names.get(which));
-                    Toast.makeText(this, "Deleted", Toast.LENGTH_SHORT).show();
-                }).show();
     }
 
     private void exportDialog() {
@@ -679,7 +860,7 @@ public class EditorActivity extends Activity {
                 WavIO.write(take.beat(), st, SR);
                 ui.post(() -> {
                     beat = st;
-                    rebuildTab();
+                    refreshUi();
                     changed();
                 });
             } catch (Exception e) {
