@@ -29,8 +29,9 @@ public final class Sheets {
     }
 
     private static final String[] HINTS = {
-            "Tuny: steady, locked hard tune (closest to Antares). Crisp: snappier note flips with a brighter edge. "
-                    + "Wavy: smoother and looser, keeps more of your natural movement. Retune speed 0 = robot.\n"
+            "Tuny: modelled on Antares Auto-Tune Pro — the most locked, glassy hard tune. "
+                    + "Crisp: modelled on Crispy Tuner. Wavy: modelled on Waves Tune, slightly looser and softer on top. "
+                    + "Retune speed 0 = robot.\n"
                     + "Voice range: pick your voice type; higher ranges also lower the live-monitor delay.",
             "Harmonies are built from your voice and follow the key & scale of the song.",
             "Chords: your voice plays a chord from the key. Melody robot: a synth following your tuned melody. "

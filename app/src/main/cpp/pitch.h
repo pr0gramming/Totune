@@ -282,15 +282,19 @@ private:
 /** Turns a sung pitch into the pitch it should be corrected to. */
 class TuneTracker {
 public:
-    static inline double TUNY_TAU = 0.0, WAVY_TAU = 0.005, TUNY_HYST = 0.3;
+    /** Per-style behaviour: 0 Tuny (Antares-like), 1 Crisp (Crispy-like), 2 Wavy (Waves-like). */
+    // fitted against Antares Auto-Tune Pro, Crispy Tuner and Waves Tune on the same vocal
+    static inline double HYST[3] = {0.05, 0.15, 0.0};
+    static inline double MIN_TAU[3] = {0.0, 0.0, 0.004};
     // style: 0 Tuny (steady), 1 Crisp (snappy), 2 Wavy (loose)
     void reset() { prevNote_ = -1000; corr_ = 0; slow_ = 0; voiced_ = false; }
 
     /** m = sung pitch (MIDI, fractional). Returns corrected pitch (MIDI) including transpose. */
     double step(double m, double dt, const bool* mask, int style, float speedMs, float amount,
                 float keepVibrato, float transpose, int* noteOut = nullptr) {
-        double hyst = style == 0 ? TUNY_HYST : (style == 1 ? 0.03 : 0.15);
-        double minTau = style == 0 ? TUNY_TAU : (style == 2 ? WAVY_TAU : 0.0);
+        int st = style < 0 ? 0 : (style > 2 ? 2 : style);
+        double hyst = HYST[st];
+        double minTau = MIN_TAU[st];
         int cand = Scales::nearest(m, mask);
         if (voiced_ && cand != prevNote_ && mask[Scales::pc(prevNote_)] && std::fabs(m - prevNote_) < 0.5 + hyst) cand = prevNote_;
         if (!voiced_) slow_ = m;

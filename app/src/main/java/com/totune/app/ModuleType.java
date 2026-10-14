@@ -78,7 +78,7 @@ public final class ModuleType {
     public static final String[] DELAY_DIVS = {"1/2", "1/4", "1/4 dotted", "1/8", "1/8 dotted", "1/8 triplet", "1/16"};
 
     public static final ModuleType[] ALL = {
-            new ModuleType(TUNE, "Autotune", "Pitch correction · Tuny, Crisp or Wavy", 1,
+            new ModuleType(TUNE, "Autotune", "Pitch correction · Tuny (Antares), Crisp (Crispy), Wavy (Waves)", 1,
                     choice("Style", 0, STYLES),
                     knob("Retune speed", 0, 400, 20, v -> v < 1 ? "Robot" : String.format(Locale.US, "%.0f ms", v)),
                     knob("Amount", 0, 100, 100, pct()),

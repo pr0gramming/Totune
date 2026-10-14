@@ -17,15 +17,21 @@ public final class KeyDetect {
             voiced++;
         }
         if (voiced < 40) return null;
-        double best = -2;
+        // 1) the scale must contain the notes that were actually sung (coverage)
+        // 2) among equally good scales, the key profile picks the tonic
+        double best = -1e9;
         int[] res = {0, 0};
         for (int mode = 0; mode < 2; mode++) {
             double[] prof = mode == 0 ? MAJOR : MINOR;
             for (int key = 0; key < 12; key++) {
+                boolean[] in = Scales.mask(key, mode);
+                double cover = 0;
+                for (int i = 0; i < 12; i++) if (in[i]) cover += hist[i];
+                cover /= voiced;
                 double[] rot = new double[12];
                 for (int i = 0; i < 12; i++) rot[i] = prof[((i - key) % 12 + 12) % 12];
-                double c = corr(hist, rot);
-                if (c > best) { best = c; res = new int[]{key, mode}; }
+                double score = cover * 10 + corr(hist, rot);
+                if (score > best) { best = score; res = new int[]{key, mode}; }
             }
         }
         return res;

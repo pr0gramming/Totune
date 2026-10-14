@@ -69,18 +69,20 @@ public:
         float speed = param(1), amount = param(2) / 100.f, keep = param(3) / 100.f, tr = param(4);
 
         an_.push(mono_.data(), n);
-        if (style == 2) {
+        if (style != tone_) setTone(style);
+        if (style != 0) {
+            // Crisp and Wavy: spectral engine with formant preservation
             spec_.process(mono_.data(), wet_.data(), n, [&]() {
                 double hz = an_.det.f0;
                 if (hz <= 0) { tracker_.unvoiced(); return 1.0; }
                 double m = hzToMidi(hz, ref);
-                double o = tracker_.step(m, spec_.latency() / 4.0 / sr_, mask, 2, speed, amount, keep, tr);
+                double o = tracker_.step(m, spec_.latency() / 4.0 / sr_, mask, style, speed, amount, keep, tr);
                 return std::pow(2.0, (o - m) / 12.0);
             });
             // align with the PSOLA latency so switching style doesn't shift timing
             for (int i = 0; i < n; i++) { wetDelay_.push(wet_[i]); wet_[i] = wetDelay_.tap(lat_ - spec_.latency()); }
         } else {
-            float gs = style == 1 ? 0.82f : 1.0f;
+            // Tuny: pitch-synchronous engine, output pitch locked to the note
             psola_.process(an_, wet_.data(), n, [&](double ts, const PitchAnalyzer::Mark& mk) {
                 double hz = an_.f0At(ts);
                 if (hz <= 0) hz = (double)sr_ / mk.T;
@@ -90,8 +92,9 @@ public:
                 lastTs_ = ts;
                 double o = tracker_.step(m, std::min(dt, 0.02), mask, style, speed, amount, keep, tr);
                 return midiToHz(o, ref);
-            }, gs);
+            }, 1.0f);
         }
+        for (int i = 0; i < n; i++) wet_[i] = tone2_.process(tone1_.process(wet_[i]));
         for (int i = 0; i < n; i++) {
             dry_.push(l[i], r[i]);
             float dl = dry_.l(lat_), dr = dry_.r(lat_);
@@ -109,6 +112,14 @@ public:
     static inline bool AIR = false;
 
 private:
+    /** Small fixed tone corrections so each style sits like the plugin it is modelled on. */
+    void setTone(int style) {
+        tone_ = style;
+        if (style == 0) { tone1_.peak(sr_, 95, 1.0, -2.6); tone2_.identity(); }
+        else if (style == 1) { tone1_.peak(sr_, 190, 0.9, -2.0); tone2_.identity(); }
+        else { tone1_.peak(sr_, 190, 0.9, -1.8); tone2_.highShelf(sr_, 7000, -1.4); }
+        tone1_.reset(); tone2_.reset();
+    }
     void configure() {
         airD1_.highPass(sr_, 7000, 0.7071); airD2_.highPass(sr_, 7000, 0.7071);
         airW1_.highPass(sr_, 7000, 0.7071); airW2_.highPass(sr_, 7000, 0.7071);
@@ -129,7 +140,8 @@ private:
     TuneTracker tracker_;
     DryDelay dry_;
     DelayLine wetDelay_;
-    Biquad airD1_, airD2_, airW1_, airW2_;
+    Biquad airD1_, airD2_, airW1_, airW2_, tone1_, tone2_;
+    int tone_ = -1;
     std::vector<float> mono_, wet_;
     int range_ = -1, lat_ = 1300;
     double lastTs_ = -1e9;
