@@ -27,6 +27,7 @@ public final class TakeStore {
         public long created;
         public double duration;
         public Params params = new Params();
+        public Rack rack = Rack.defaultRack();
 
         Take(File dir) { this.dir = dir; }
         public String id() { return dir.getName(); }
@@ -48,6 +49,8 @@ public final class TakeStore {
         Take t = new Take(d);
         t.created = System.currentTimeMillis();
         t.name = "Take " + (list(c).size() + 1);
+        t.rack = Presets.lastRack(c);
+        Presets.loadLastSong(c, t.params);
         return t;
     }
 
@@ -77,6 +80,9 @@ public final class TakeStore {
             t.duration = o.optDouble("duration", 0);
             JSONObject p = o.optJSONObject("params");
             if (p != null) t.params = paramsFromJson(p);
+            org.json.JSONArray rk = o.optJSONArray("rack");
+            if (rk != null) t.rack = Rack.fromJson(rk);
+            else if (p != null) t.rack = Rack.fromOldParams(t.params);   // take made before the rack existed
             return t;
         } catch (Exception e) {
             return null;
@@ -90,6 +96,7 @@ public final class TakeStore {
             o.put("created", t.created);
             o.put("duration", t.duration);
             o.put("params", paramsToJson(t.params));
+            o.put("rack", t.rack.toJson());
             File tmp = new File(t.dir, "meta.json.tmp");
             try (FileOutputStream fo = new FileOutputStream(tmp)) {
                 fo.write(o.toString().getBytes(StandardCharsets.UTF_8));

@@ -8,12 +8,12 @@ import android.graphics.Path;
 import android.graphics.Shader;
 import android.view.View;
 
-import com.totune.app.dsp.Effects;
-import com.totune.app.dsp.Params;
+import com.totune.app.dsp.Biquad;
 
 /** Draws the EQ's combined frequency response. */
 public class EqCurveView extends View {
-    private Params params;
+    private float[] params;
+    private boolean on = true;
     private final Paint bg = new Paint(), grid = new Paint(), zero = new Paint();
     private final Paint curve = new Paint(Paint.ANTI_ALIAS_FLAG), fill = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint txt = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -28,7 +28,19 @@ public class EqCurveView extends View {
         txt.setColor(Ui.DIM); txt.setTextSize(Ui.dp(c, 9.5f));
     }
 
-    public void setParams(Params p) { params = p; invalidate(); }
+    /** p = EQ module parameters (see ModuleType.EQ). */
+    public void setParams(float[] p, boolean on) { params = p; this.on = on; invalidate(); }
+
+    private static double response(float[] p, double f) {
+        int sr = 48000;
+        double db = 0;
+        if (p[0] > 0.5f) db += Biquad.highPass(sr, p[1], 0.7071).responseDb(sr, f);
+        if (Math.abs(p[2]) > 0.05f) db += Biquad.lowShelf(sr, p[3], p[2]).responseDb(sr, f);
+        if (Math.abs(p[4]) > 0.05f) db += Biquad.peak(sr, p[5], Math.max(0.1f, p[6]), p[4]).responseDb(sr, f);
+        if (Math.abs(p[7]) > 0.05f) db += Biquad.highShelf(sr, p[8], p[7]).responseDb(sr, f);
+        if (p[9] > 0.5f) db += Biquad.lowPass(sr, p[10], 0.7071).responseDb(sr, f);
+        return db;
+    }
 
     @Override
     protected void onDraw(Canvas c) {
@@ -49,7 +61,7 @@ public class EqCurveView extends View {
         int steps = 160;
         for (int i = 0; i <= steps; i++) {
             double f = FMIN * Math.pow(FMAX / FMIN, i / (double) steps);
-            double db = params.eqOn ? Effects.eqResponseDb(44100, params, f) : 0;
+            double db = on ? response(params, f) : 0;
             float x = xOf(f, w), y = yOf(Math.max(-DB * 1.5, Math.min(DB, db)), h);
             if (i == 0) { p.moveTo(x, y); area.moveTo(x, yOf(0, h)); area.lineTo(x, y); }
             else { p.lineTo(x, y); area.lineTo(x, y); }
@@ -58,7 +70,7 @@ public class EqCurveView extends View {
         area.close();
         fill.setShader(new LinearGradient(0, 0, 0, h, 0x55FF6B3D, 0x05FF6B3D, Shader.TileMode.CLAMP));
         c.drawPath(area, fill);
-        curve.setColor(params.eqOn ? Ui.ACCENT : Ui.DIM);
+        curve.setColor(on ? Ui.ACCENT : Ui.DIM);
         c.drawPath(p, curve);
     }
 

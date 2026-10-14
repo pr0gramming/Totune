@@ -27,6 +27,22 @@ public final class WavIO {
         }
     }
 
+    /** Linear-interpolation resampler. */
+    public static float[] resample(float[] in, int from, int to) {
+        if (from == to || in.length == 0) return in;
+        int outLen = (int) ((long) in.length * to / from);
+        float[] out = new float[outLen];
+        double step = (double) from / to;
+        for (int i = 0; i < outLen; i++) {
+            double pos = i * step;
+            int i0 = (int) pos;
+            double t = pos - i0;
+            float a = in[Math.min(i0, in.length - 1)], b = in[Math.min(i0 + 1, in.length - 1)];
+            out[i] = (float) (a + (b - a) * t);
+        }
+        return out;
+    }
+
     public static Audio read(File f) throws IOException {
         try (InputStream in = new FileInputStream(f)) {
             byte[] all = readAll(in);

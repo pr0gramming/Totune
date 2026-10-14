@@ -9,7 +9,7 @@ import android.media.MediaFormat;
 import android.media.MediaMuxer;
 import android.net.Uri;
 
-import com.totune.app.dsp.Engine;
+import com.totune.app.dsp.WavIO;
 
 import java.io.File;
 import java.io.IOException;
@@ -20,7 +20,7 @@ import java.nio.ByteOrder;
 public final class AudioCodec {
     private AudioCodec() {}
 
-    public static final int SR = 44100;
+    public static final int SR = NativeEngine.SR;
 
     private static final class Grow {
         float[] a = new float[1 << 16];
@@ -106,8 +106,8 @@ public final class AudioCodec {
                     if ((info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) outDone = true;
                 }
             }
-            float[] lf = Engine.resample(l.get(), sr, SR);
-            float[] rf = Engine.resample(r.get(), sr, SR);
+            float[] lf = WavIO.resample(l.get(), sr, SR);
+            float[] rf = WavIO.resample(r.get(), sr, SR);
             int n = Math.min(lf.length, rf.length);
             if (n == 0) throw new IOException("The file contained no audio");
             return new float[][]{java.util.Arrays.copyOf(lf, n), java.util.Arrays.copyOf(rf, n)};

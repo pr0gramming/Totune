@@ -22,7 +22,19 @@ jobs:
       - name: Build signed APK
         run: |
           chmod +x gradlew
-          ./gradlew assembleRelease --no-daemon --stacktrace
+          set -o pipefail
+          ./gradlew assembleRelease --no-daemon --stacktrace 2>&1 | tee build.log
+
+      - name: Publish build log on failure
+        if: failure()
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: log-${{ github.run_number }}
+          name: Build ${{ github.run_number }} failed (log)
+          body: Build log for debugging.
+          files: build.log
+          prerelease: true
+          make_latest: false
 
       - name: Rename APK
         run: cp app/build/outputs/apk/release/app-release.apk Totune.apk
